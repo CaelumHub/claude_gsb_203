@@ -94,6 +94,25 @@ def deinterleave(interleaved: Sequence[float], channels: int) -> List[List[float
     return [list(interleaved[i::channels]) for i in range(channels)]
 
 
+def remix_channels(channels: Sequence[Sequence[float]], target: int) -> List[List[float]]:
+    """Remix de-interleaved channels to ``target`` channels.
+
+    Downmixing averages the source channels so content from every side is
+    preserved (averaging can never clip: |mean| <= max|input|).  Upmixing
+    duplicates channels cyclically (mono -> stereo copies the one channel
+    to both sides).
+    """
+    src = len(channels)
+    if src == 0 or target == src:
+        return [list(c) for c in channels]
+    if target == 1:
+        return [to_mono(channels)]
+    if target < src:
+        # Fold source channels onto the outputs round-robin and average.
+        return [to_mono(channels[i::target]) for i in range(target)]
+    return [list(channels[i % src]) for i in range(target)]
+
+
 # --------------------------------------------------------------------------- #
 # WAV decode / encode primitives
 # --------------------------------------------------------------------------- #
@@ -440,7 +459,7 @@ def _convert_wav(src_wav: str, dst_path: str, dst_sr: Optional[int],
         resamplers = [dsp.StreamingResampler(r.sr, sr) for _ in range(ch)]
         with WavWriter(dst_path, sr, ch, sw) as out:
             for chunk in r.iter_chunks():
-                c = [list(x) for x in chunk[:ch]]
+                c = remix_channels(chunk, ch)
                 if need_resample:
                     out_ch = []
                     for i, rs in enumerate(resamplers):
@@ -482,7 +501,7 @@ def _convert_raw(src_wav: str, dst_path: str, dst_sr: Optional[int],
         resamplers = [dsp.StreamingResampler(r.sr, sr) for _ in range(ch)]
         with open(dst_path, "wb") as f:
             for chunk in r.iter_chunks():
-                c = [list(x) for x in chunk[:ch]]
+                c = remix_channels(chunk, ch)
                 if need_resample:
                     out_ch = []
                     for i, rs in enumerate(resamplers):
