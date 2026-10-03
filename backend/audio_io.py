@@ -77,6 +77,35 @@ def to_mono(channels: Sequence[Sequence[float]]) -> List[float]:
     return [sum(c[i] for c in channels) * inv for i in range(length)]
 
 
+def remix_channels(channels: Sequence[Sequence[float]], dst_channels: int) -> List[List[float]]:
+    """Remap de-interleaved channels to exactly ``dst_channels`` channels.
+
+    * Same count -> plain copy.
+    * Downmix to mono -> all channels averaged (nothing is dropped).
+    * Upmix from mono -> the single channel is duplicated.
+    * Other downmixes fold the extra channels into the kept ones (averaged),
+      so content from dropped channels is still audible.
+    * Other upmixes tile the source channels cyclically.
+    """
+    n = len(channels)
+    if dst_channels <= 0 or n == dst_channels:
+        return [list(c) for c in channels]
+    if dst_channels == 1:
+        return [to_mono(channels)]
+    if n == 1:
+        return [list(channels[0]) for _ in range(dst_channels)]
+    if n > dst_channels:
+        out = [list(c) for c in channels[:dst_channels]]
+        counts = [1] * dst_channels
+        for i, extra in enumerate(channels[dst_channels:]):
+            slot = i % dst_channels
+            merged = out[slot]
+            out[slot] = [(merged[j] + extra[j]) for j in range(min(len(merged), len(extra)))]
+            counts[slot] += 1
+        return [[x / cnt for x in c] for c, cnt in zip(out, counts)]
+    return [list(channels[i % n]) for i in range(dst_channels)]
+
+
 def interleave(channels: Sequence[Sequence[float]]) -> List[float]:
     """De-interleaved channel lists -> interleaved sample list."""
     if not channels:
@@ -440,7 +469,7 @@ def _convert_wav(src_wav: str, dst_path: str, dst_sr: Optional[int],
         resamplers = [dsp.StreamingResampler(r.sr, sr) for _ in range(ch)]
         with WavWriter(dst_path, sr, ch, sw) as out:
             for chunk in r.iter_chunks():
-                c = [list(x) for x in chunk[:ch]]
+                c = remix_channels(chunk, ch)
                 if need_resample:
                     out_ch = []
                     for i, rs in enumerate(resamplers):
@@ -482,7 +511,7 @@ def _convert_raw(src_wav: str, dst_path: str, dst_sr: Optional[int],
         resamplers = [dsp.StreamingResampler(r.sr, sr) for _ in range(ch)]
         with open(dst_path, "wb") as f:
             for chunk in r.iter_chunks():
-                c = [list(x) for x in chunk[:ch]]
+                c = remix_channels(chunk, ch)
                 if need_resample:
                     out_ch = []
                     for i, rs in enumerate(resamplers):
